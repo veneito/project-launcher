@@ -125,17 +125,6 @@ pub fn ago(time: SystemTime) -> String {
     }
 }
 
-pub fn open_in_code(path: &Path) -> Result<(), String> {
-    let mut command = std::process::Command::new("code.cmd");
-    command.arg(path);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
-    command
-        .spawn()
-        .map(drop)
-        .map_err(|_| "Could not start VS Code. Is `code` on your PATH?".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

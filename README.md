@@ -8,13 +8,15 @@ A small, low-memory native desktop app (Rust + GPUI) that lists all your project
 
 - Scans `Documents\Claude` and lists each subfolder as a project, newest activity first.
 - Detects project type from marker files (Rust, Node, Python, Godot, Unity, .NET, Roblox, Web) and shows the git branch.
-- Fuzzy search; Enter opens the first match, clicking a row opens it in VS Code.
-- Type filters in the sidebar, Sonora-style glass window (reused from my Server Dashboard app).
-- Settings page: choose which folders to scan, and change the look (Solid or Glass, tint strength, color presets or custom hex colors). Saved in `%LOCALAPPDATA%\ProjectLauncher`.
+- Sonora-style layout: sidebar (Home, Search, Your Library by type, Recent, Settings, Pinned), project table, details panel, and a bottom bar.
+- Fuzzy search; click a row to select it, double-click or Enter to open it.
+- Every type has a default open command (VS Code, File Explorer, Terminal, or any custom command with `{path}`), and each project can override its type and its command.
+- Pin projects, and see recently opened ones.
+- Settings page: folders to scan, open commands per type, and the look (Solid or Glass, tint strength, color presets or custom hex colors). Saved in `%LOCALAPPDATA%\ProjectLauncher`.
 
 ## Planned
 
-- Pinned projects.
+- Sortable columns, global hotkey, tray icon.
 - Global hotkey, tray icon, per-project run commands.
 
 ## Build (Windows)
