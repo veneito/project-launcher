@@ -38,6 +38,13 @@ impl Appearance {
         }
         settings
     }
+    pub fn save(self) -> Result<(), String> {
+        let path = Self::path().ok_or("Cannot find the local settings folder.")?;
+        std::fs::create_dir_all(path.parent().unwrap())
+            .map_err(|_| "Could not create the settings folder.")?;
+        std::fs::write(path, serde_json::to_vec_pretty(&self).unwrap())
+            .map_err(|_| "Could not save appearance settings.".into())
+    }
     pub fn apply(self, window: &Window) {
         window.set_background_appearance(if self.glass {
             WindowBackgroundAppearance::Blurred

@@ -13,11 +13,30 @@ pub struct Project {
     pub modified: SystemTime,
 }
 
-// shortcut: one hard-coded root, no settings file yet; add a roots setting when you keep projects elsewhere.
+fn roots_file() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|root| PathBuf::from(root).join("ProjectLauncher/roots.json"))
+}
+
+/// Saved scan folders, or `Documents\Claude` when none are saved yet.
 pub fn roots() -> Vec<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .map(|home| vec![PathBuf::from(home).join("Documents").join("Claude")])
-        .unwrap_or_default()
+    roots_from(roots_file().and_then(|path| fs::read(path).ok()))
+}
+
+fn roots_from(saved: Option<Vec<u8>>) -> Vec<PathBuf> {
+    saved
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|home| vec![PathBuf::from(home).join("Documents").join("Claude")])
+                .unwrap_or_default()
+        })
+}
+
+pub fn save_roots(roots: &[PathBuf]) -> Result<(), String> {
+    let path = roots_file().ok_or("Cannot find the local settings folder.")?;
+    fs::create_dir_all(path.parent().unwrap()).map_err(|_| "Could not create the settings folder.")?;
+    fs::write(path, serde_json::to_vec_pretty(roots).unwrap())
+        .map_err(|_| "Could not save the folder list.".into())
 }
 
 /// Every direct subfolder of each root is a project, newest activity first.
@@ -127,6 +146,14 @@ mod tests {
         assert!(fuzzy("srvdash", "Server Dashboard"));
         assert!(fuzzy("", "anything"));
         assert!(!fuzzy("dashserver", "Server Dashboard"));
+    }
+
+    #[test]
+    fn saved_roots_win_and_bad_files_fall_back() {
+        let saved = roots_from(Some(br#"["D:\\Code"]"#.to_vec()));
+        assert_eq!(saved, vec![PathBuf::from(r"D:\Code")]);
+        assert!(roots_from(Some(b"not json".to_vec())).len() <= 1);
+        assert_eq!(roots_from(Some(b"[]".to_vec())), Vec::<PathBuf>::new());
     }
 
     #[test]

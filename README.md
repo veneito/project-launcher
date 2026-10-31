@@ -10,10 +10,11 @@ A small, low-memory native desktop app (Rust + GPUI) that lists all your project
 - Detects project type from marker files (Rust, Node, Python, Godot, Unity, .NET, Roblox, Web) and shows the git branch.
 - Fuzzy search; Enter opens the first match, clicking a row opens it in VS Code.
 - Type filters in the sidebar, Sonora-style glass window (reused from my Server Dashboard app).
+- Settings page: choose which folders to scan, and change the look (Solid or Glass, tint strength, color presets or custom hex colors). Saved in `%LOCALAPPDATA%\ProjectLauncher`.
 
 ## Planned
 
-- Configurable root folders, pinned projects.
+- Pinned projects.
 - Global hotkey, tray icon, per-project run commands.
 
 ## Build (Windows)

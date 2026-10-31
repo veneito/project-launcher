@@ -5,15 +5,26 @@ mod projects;
 
 use gpui::{prelude::*, *};
 use gpui_component::{
-    Root, Selectable, Theme, ThemeMode, TitleBar,
+    Disableable, Root, Selectable, Theme, ThemeMode, TitleBar,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
 };
 use projects::Project;
+use std::path::PathBuf;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Projects,
+    Settings,
+}
 
 struct Launcher {
     query: Entity<InputState>,
+    surface_color: Entity<InputState>,
+    accent_color: Entity<InputState>,
+    roots: Vec<PathBuf>,
     projects: Vec<Project>,
+    page: Page,
     kind: Option<&'static str>,
     message: String,
     appearance: appearance::Appearance,
@@ -24,6 +35,13 @@ impl Launcher {
         let appearance = appearance::Appearance::load();
         appearance.apply(window);
         appearance.apply_theme(cx);
+        let surface_color = cx.new(|cx| {
+            InputState::new(window, cx).default_value(format!("#{:06X}", appearance.surface))
+        });
+        let accent_color = cx.new(|cx| {
+            InputState::new(window, cx).default_value(format!("#{:06X}", appearance.accent))
+        });
+        let roots = projects::roots();
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
         cx.subscribe_in(&query, window, |view, _, event, _, cx| match event {
             InputEvent::PressEnter { .. } => {
@@ -37,11 +55,179 @@ impl Launcher {
         .detach();
         Self {
             query,
-            projects: projects::scan(&projects::roots()),
+            surface_color,
+            accent_color,
+            projects: projects::scan(&roots),
+            roots,
+            page: Page::Projects,
             kind: None,
             message: String::new(),
             appearance,
         }
+    }
+
+    fn rescan(&mut self) {
+        self.projects = projects::scan(&self.roots);
+        // A filter for a type that no longer exists would show an empty list.
+        if self.kind.is_some_and(|k| !self.projects.iter().any(|p| p.kind == k)) {
+            self.kind = None;
+        }
+    }
+
+    fn save_roots(&mut self, cx: &mut Context<Self>) {
+        self.rescan();
+        self.message = match projects::save_roots(&self.roots) {
+            Ok(()) => format!("Saved. Scanning {} folder(s).", self.roots.len()),
+            Err(error) => error,
+        };
+        cx.notify();
+    }
+
+    fn pick_folder(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+            prompt: Some("Choose folders that contain your projects".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = picked.await {
+                let _ = this.update(cx, |view, cx| {
+                    for path in paths {
+                        if !view.roots.contains(&path) {
+                            view.roots.push(path);
+                        }
+                    }
+                    view.save_roots(cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn save_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.appearance.apply(window);
+        self.appearance.apply_theme(cx);
+        self.message = match self.appearance.save() {
+            Ok(()) => "Appearance saved.".into(),
+            Err(error) => error,
+        };
+        cx.notify();
+    }
+
+    fn set_palette(&mut self, surface: u32, accent: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.appearance.surface = surface;
+        self.appearance.accent = accent;
+        self.surface_color
+            .update(cx, |input, cx| input.set_value(format!("#{surface:06X}"), window, cx));
+        self.accent_color
+            .update(cx, |input, cx| input.set_value(format!("#{accent:06X}"), window, cx));
+        self.save_appearance(window, cx);
+    }
+
+    fn folders_panel(&self, cx: &mut Context<Self>) -> Div {
+        let mut panel = panel("Folders to scan")
+            .child("Every folder directly inside these is listed as a project.");
+        for (index, root) in self.roots.iter().enumerate() {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_1().min_w_0().child(root.display().to_string()))
+                    .child(
+                        Button::new(SharedString::from(format!("remove-{index}")))
+                            .label("Remove")
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                view.roots.remove(index);
+                                view.save_roots(cx);
+                            })),
+                    ),
+            );
+        }
+        if self.roots.is_empty() {
+            panel = panel.child(div().text_color(rgb(0xd7b26d)).child("No folders. Add one to see projects."));
+        }
+        panel.child(
+            Button::new("add-folder")
+                .label("Add folders…")
+                .on_click(cx.listener(|view, _, _, cx| view.pick_folder(cx))),
+        )
+    }
+
+    fn appearance_panel(&self, cx: &mut Context<Self>) -> Div {
+        let mut modes = div().flex().gap_2();
+        for (label, glass) in [("Solid", false), ("Glass", true)] {
+            modes = modes.child(
+                Button::new(label)
+                    .label(label)
+                    .selected(self.appearance.glass == glass)
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.appearance.glass = glass;
+                        view.save_appearance(window, cx);
+                    })),
+            );
+        }
+        let mut strength = div().flex().gap_2();
+        for (label, tint) in [("Crystal", 45), ("Light", 100), ("Balanced", 160), ("Deep", 220)] {
+            strength = strength.child(
+                Button::new(label)
+                    .label(label)
+                    .selected(self.appearance.tint == tint)
+                    .disabled(!self.appearance.glass)
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.appearance.tint = tint;
+                        view.save_appearance(window, cx);
+                    })),
+            );
+        }
+        let mut palettes = div().flex().flex_wrap().gap_2();
+        for (name, surface, accent) in [
+            ("Teal", 0x0c1417, 0x92c8e5),
+            ("Graphite", 0x151515, 0xc4c4ce),
+            ("Blue", 0x101a2d, 0x92b9ff),
+            ("Plum", 0x211324, 0xd5a8e3),
+            ("Forest", 0x101f19, 0x91cba6),
+        ] {
+            palettes = palettes.child(
+                Button::new(name)
+                    .label(name)
+                    .selected(self.appearance.surface == surface)
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.set_palette(surface, accent, window, cx);
+                    })),
+            );
+        }
+        panel("Look")
+            .child("Glass lets the desktop show through; Solid is opaque and uses the least graphics work.")
+            .child(modes)
+            .child("Glass tint · lower is more transparent")
+            .child(strength)
+            .child("Theme colors")
+            .child(palettes)
+            .child("Background tint · dark hex color")
+            .child(Input::new(&self.surface_color))
+            .child("Accent · hex color")
+            .child(Input::new(&self.accent_color))
+            .child(Button::new("apply-colors").label("Apply colors").on_click(cx.listener(
+                |view, _, window, cx| {
+                    let colors = appearance::parse_color(&view.surface_color.read(cx).value())
+                        .and_then(|surface| {
+                            if !appearance::dark_surface(surface) {
+                                return Err("Choose a darker background tint so text stays readable.".into());
+                            }
+                            appearance::parse_color(&view.accent_color.read(cx).value())
+                                .map(|accent| (surface, accent))
+                        });
+                    match colors {
+                        Ok((surface, accent)) => view.set_palette(surface, accent, window, cx),
+                        Err(error) => {
+                            view.message = error;
+                            cx.notify();
+                        }
+                    }
+                },
+            )))
     }
 
     /// Indexes into `projects` that pass the kind filter and the search box.
@@ -77,7 +263,7 @@ impl Launcher {
         let entries = std::iter::once((None, "All", self.projects.len()))
             .chain(kinds.into_iter().map(|(k, n)| (Some(k), k, n)));
         for (kind, label, count) in entries {
-            let selected = self.kind == kind;
+            let selected = self.page == Page::Projects && self.kind == kind;
             nav = nav.child(
                 Button::new(label)
                     .ghost()
@@ -96,6 +282,7 @@ impl Launcher {
                     .cursor_pointer()
                     .on_click(cx.listener(move |view, _, _, cx| {
                         view.kind = kind;
+                        view.page = Page::Projects;
                         cx.notify();
                     }))
                     .label(format!("{label}  ·  {count}")),
@@ -136,12 +323,48 @@ impl Launcher {
                 Button::new("rescan")
                     .label("Rescan folders")
                     .on_click(cx.listener(|view, _, _, cx| {
-                        view.projects = projects::scan(&projects::roots());
+                        view.rescan();
                         view.message = "Rescanned".into();
                         cx.notify();
                     })),
             )
+            .child(
+                Button::new("settings")
+                    .ghost()
+                    .selected(self.page == Page::Settings)
+                    .w_full()
+                    .justify_start()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(if self.page == Page::Settings {
+                        rgba((self.appearance.accent << 8) | 44)
+                    } else {
+                        rgba(0x00000000)
+                    })
+                    .text_color(rgb(if self.page == Page::Settings { 0xf5f3ee } else { 0xa7a7a7 }))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.page = Page::Settings;
+                        cx.notify();
+                    }))
+                    .label("Settings"),
+            )
     }
+}
+
+fn panel(title: &'static str) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .max_w(px(620.))
+        .p_5()
+        .rounded_lg()
+        .bg(rgba(0xffffff07))
+        .border_1()
+        .border_color(rgba(0xffffff12))
+        .child(div().text_lg().child(title))
 }
 
 impl Render for Launcher {
@@ -204,7 +427,19 @@ impl Render for Launcher {
                     .child("No projects match."),
             );
         }
-        let content = div()
+        let settings = div()
+            .id("settings-page")
+            .size_full()
+            .overflow_y_scroll()
+            .bg(self.appearance.fill(0x0c1417))
+            .p_6()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("Settings"))
+            .child(self.folders_panel(cx))
+            .child(self.appearance_panel(cx));
+        let projects_page = div()
             .size_full()
             .flex()
             .flex_col()
@@ -224,7 +459,13 @@ impl Render for Launcher {
                     .child(Input::new(&self.query)),
             )
             .child(list);
-        let root_names = projects::roots()
+        let content = if self.page == Page::Settings {
+            settings.into_any_element()
+        } else {
+            projects_page.into_any_element()
+        };
+        let root_names = self
+            .roots
             .iter()
             .map(|root| root.display().to_string())
             .collect::<Vec<_>>()
